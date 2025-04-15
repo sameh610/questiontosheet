@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Spreadsheet Chart Generator</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* Custom styles */
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #f3f4f6;
+    }
+    .chart-container-wrapper {
+      background-color: white; padding: 1rem; border-radius: 0.5rem;
+      box-shadow: 0 1px 3px 0 rgba(0, 0, 0, 0.1), 0 1px 2px 0 rgba(0, 0, 0, 0.06);
+      margin-bottom: 1.5rem; display: flex; flex-direction: column;
+    }
+    .chart-canvas-container {
+      height: 350px; display: flex; align-items: center; justify-content: center;
+      margin-bottom: 0.5rem;
+    }
+    canvas { max-width: 100%; max-height: 100%; }
+    #message-box {
+      position: fixed; top: 20px; right: 20px; padding: 1rem; border-radius: 0.5rem;
+      box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1); z-index: 1000; display: none; max-width: 300px;
+    }
+    #message-box.success { background-color: #d1fae5; color: #065f46; }
+    #message-box.error { background-color: #fee2e2; color: #991b1b; }
+    #message-box.warning { background-color: #fef3c7; color: #92400e; }
+    .dropdown { position: relative; display: inline-block; }
+    .dropdown-content {
+      display: none; position: absolute; background-color: #f9f9f9; min-width: 100px;
+      box-shadow: 0px 8px 16px 0px rgba(0,0,0,0.2); z-index: 1; border-radius: 0.375rem;
+      padding: 0.5rem 0; bottom: 100%; margin-bottom: 0.5rem; right: 0;
+    }
+    .dropdown-content button {
+      color: black; padding: 0.5rem 1rem; text-decoration: none; display: block;
+      width: 100%; text-align: left; background: none; border: none; font-size: 0.875rem;
+    }
+    .dropdown-content button:hover { background-color: #e5e7eb; }
+    .show-dropdown { display: block; }
+  </style>
+</head>
+<body class="p-4 md:p-8">
+
+  <div class="max-w-6xl mx-auto bg-white p-6 md:p-8 rounded-lg shadow-md">
+    <h1 class="text-2xl md:text-3xl font-bold mb-6 text-center text-gray-800">Spreadsheet Chart Generator</h1>
+
+    <div class="mb-6 space-y-4">
+      <div>
+        <label for="sheet-url" class="block text-sm font-medium text-gray-700 mb-1">Google Sheet Public CSV Link:</label>
+        <div class="flex flex-col sm:flex-row gap-2">
+          <input type="url" id="sheet-url" placeholder="Paste public Google Sheet link (must end in /edit... or be shareable)" class="flex-grow p-2 border border-gray-300 rounded-md shadow-sm focus:ring-indigo-500 focus:border-indigo-500">
+          <button id="fetch-button" class="bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-md shadow-sm transition duration-150 ease-in-out disabled:opacity-50">
+            Fetch and Generate Charts
+          </button>
+        </div>
+        <p class="text-xs text-gray-500 mt-1">Make sure your sheet is published to the web as CSV or publicly viewable.</p>
+      </div>
+      <div class="text-center text-gray-500 my-2">OR</div>
+      <div>
+        <label for="csv-file" class="block text-sm font-medium text-gray-700 mb-1">Upload CSV File:</label>
+        <input type="file" id="csv-file" accept=".csv" class="block w-full text-sm text-gray-500
+          file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-semibold
+          file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 transition duration-150 ease-in-out">
+      </div>
+    </div>
+
+    <div id="loading" class="text-center my-4" style="display: none;">
+      <svg class="animate-spin h-8 w-8 text-indigo-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+      </svg>
+      <p class="mt-2 text-gray-600">Processing data and generating charts...</p>
+    </div>
+
+    <div id="chart-area" class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mt-8"></div>
+
+    <div id="message-box">
+      <span id="message-text"></span>
+      <button onclick="this.parentElement.style.display='none'" class="ml-4 font-bold text-lg align-top">&times;</button>
+    </div>
+  </div>
+
+  <script>
+    // DOM Elements
+    const urlInput = document.getElementById('sheet-url');
+    const fetchButton = document.getElementById('fetch-button');
+    const fileInput = document.getElementById('csv-file');
+    const chartArea = document.getElementById('chart-area');
+    const loadingIndicator = document.getElementById('loading');
+    const messageBox = document.getElementById('message-box');
+    const messageText = document.getElementById('message-text');
+
+    let activeCharts = []; // Stores { chart: chartInstance, header: header }
+
+    // --- Utility Functions ---
+
+    function showMessage(message, type = 'error') {
+      messageText.textContent = message;
+      messageBox.className = ''; // Clear existing classes
+      messageBox.classList.add(type); // Add new type class
+      messageBox.style.display = 'block';
+      // Auto-hide after 5 seconds
+      setTimeout(() => {
+        if (messageBox.style.display === 'block') {
+          messageBox.style.display = 'none';
+        }
+      }, 5000);
+    }
+
+    function clearCharts() {
+      // Destroy chart instances before clearing HTML
+      activeCharts.forEach(item => item.chart.destroy());
+      activeCharts = [];
+      chartArea.innerHTML = '';
+    }
+
+    function convertGoogleSheetUrlToCsvUrl(url) {
+      try {
+        const sheetUrl = new URL(url);
+        const match = sheetUrl.pathname.match(/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);
+        if (match && match[1]) {
+          const sheetId = match[1];
+          if (sheetUrl.pathname.includes('/export') && sheetUrl.searchParams.get('format') === 'csv') return url;
+          return `https://docs.google.com/spreadsheets/d/${sheetId}/export?format=csv&gid=0`;
+        }
+      } catch (e) { console.error("Error parsing URL:", e); return null; }
+      return null;
+    }
+
+    async function fetchCsvFromUrl(url) {
+      const csvUrl = convertGoogleSheetUrlToCsvUrl(url);
+      if (!csvUrl) throw new Error("Invalid Google Sheet URL format.");
+      console.log(`Fetching from: ${csvUrl}`);
+      try {
+        const response = await fetch(csvUrl);
+        if (!response.ok) {
+          console.error(`HTTP error! Status: ${response.status}`);
+          let errorBody = 'Could not read error body.';
+          try { errorBody = await response.text(); console.error('Error Body:', errorBody); } catch (e) {}
+          if (response.status === 404) throw new Error(`Could not fetch (404). Check URL & sheet publishing (publish to web > CSV).`);
+          if (response.status === 403) throw new Error(`Could not fetch (403). Check sheet publishing (publish to web > CSV).`);
+          throw new Error(`Could not fetch data. Status: ${response.status}. Check sheet is public/published.`);
+        }
+        return await response.text();
+      } catch (error) {
+        console.error("Fetch error:", error);
+        if (error.message.includes('fetch')) throw error;
+        if (error instanceof TypeError && error.message.includes('Failed to fetch')) throw new Error("Network/CORS error. Ensure sheet is published (publish to web > CSV) or upload file.");
+        throw new Error(`Failed to fetch CSV: ${error.message}`);
+      }
+    }
+
+    function readCsvFromFile(file) {
+      return new Promise((resolve, reject) => {
+        if (!file) return reject(new Error("No file selected."));
+        if (file.type !== 'text/csv' && !file.name.toLowerCase().endsWith('.csv')) return reject(new Error("Invalid file type (.csv required)."));
+        const reader = new FileReader();
+        reader.onload = (event) => resolve(event.target.result);
+        reader.onerror = (event) => reject(new Error(`File reading error: ${reader.error}`));
+        reader.readAsText(file);
+      });
+    }
+
+    // Modified CSV parsing: the first row is explicitly treated as the header row.
+    function parseCsvData(csvText) {
+      return new Promise((resolve, reject) => {
+        Papa.parse(csvText, {
+          header: false, // Do NOT auto-detect headers.
+          skipEmptyLines: true,
+          dynamicTyping: false,
+          complete: (results) => {
+            if (results.errors.length > 0) {
+              console.error("CSV Parsing errors:", results.errors);
+              reject(new Error(`CSV Parsing Error: ${results.errors[0].message} on row ${results.errors[0].row + 1}`));
+            } else if (!results.data || results.data.length < 2) {
+              reject(new Error("CSV must have at least two rows (one header row and one data row)."));
+            } else {
+              // Extract the first row as headers.
+              const headers = results.data[0];
+              // Map the rest of the rows into objects using the header row.
+              const dataRows = results.data.slice(1).map(row => {
+                let rowObj = {};
+                headers.forEach((header, idx) => {
+                  rowObj[header] = row[idx];
+                });
+                return rowObj;
+              });
+              resolve({ data: dataRows, meta: { fields: headers } });
+            }
+          },
+          error: (error) => { console.error("PapaParse critical error:", error); reject(new Error(`Failed to parse CSV: ${error.message}`)); }
+        });
+      });
+    }
+
+    function analyzeColumn(columnData) {
+      const frequencies = new Map();
+      let numericCount = 0, nonNumericCount = 0, nonNullValues = 0;
+      for (const value of columnData) {
+        const trimmedValue = value ? String(value).trim() : '';
+        if (trimmedValue !== '') {
+          nonNullValues++;
+          if (!isNaN(trimmedValue) && isFinite(parseFloat(trimmedValue))) numericCount++;
+          else nonNumericCount++;
+          frequencies.set(trimmedValue, (frequencies.get(trimmedValue) || 0) + 1);
+        }
+      }
+      const isPrimarilyNumeric = nonNullValues > 0 && (numericCount / nonNullValues > 0.8);
+      return { type: isPrimarilyNumeric ? 'numerical' : 'categorical', frequencies };
+    }
+
+    function generateColors(count) {
+      const colors = [];
+      for (let i = 0; i < count; i++) {
+        const r = Math.floor(50 + Math.random() * 180);
+        const g = Math.floor(50 + Math.random() * 180);
+        const b = Math.floor(50 + Math.random() * 180);
+        colors.push(`rgba(${r}, ${g}, ${b}, 0.75)`);
+      }
+      return colors;
+    }
+
+    // --- Download Helper Functions ---
+
+    function sanitizeFilename(name) {
+      return name.replace(/[^a-z0-9_\-\s]/gi, '').replace(/\s+/g, '_').substring(0, 50) || 'chart';
+    }
+
+    function triggerDownload(dataUrl, filename) {
+      console.log(`Triggering download for: ${filename}`);
+      try {
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        link.download = filename;
+        document.body.appendChild(link); // Required for Firefox
+        link.click();
+        document.body.removeChild(link);
+        console.log(`Download triggered successfully for: ${filename}`);
+      } catch (error) {
+        console.error(`Error triggering download for ${filename}:`, error);
+        showMessage(`Download failed: ${error.message}`, 'error');
+      }
+    }
+
+    function downloadChartAsImage(canvas, format, filename) {
+      console.log(`Attempting to download chart as ${format.toUpperCase()}...`);
+      try {
+        const mimeType = format === 'jpeg' ? 'image/jpeg' : 'image/png';
+        let dataUrl;
+        if (format === 'jpeg') {
+          const tempCanvas = document.createElement('canvas');
+          tempCanvas.width = canvas.width;
+          tempCanvas.height = canvas.height;
+          const tempCtx = tempCanvas.getContext('2d');
+          tempCtx.fillStyle = '#FFFFFF';
+          tempCtx.fillRect(0, 0, tempCanvas.width, tempCanvas.height);
+          tempCtx.drawImage(canvas, 0, 0);
+          dataUrl = tempCanvas.toDataURL(mimeType, 0.9);
+        } else {
+          dataUrl = canvas.toDataURL(mimeType);
+        }
+        if (!dataUrl || dataUrl === 'data:,') {
+          throw new Error("Generated empty image data.");
+        }
+        triggerDownload(dataUrl, `${filename}.${format}`);
+      } catch (error) {
+        console.error(`Error downloading chart as ${format.toUpperCase()}:`, error);
+        showMessage(`Failed to download as ${format.toUpperCase()}: ${error.message}`, 'error');
+      }
+    }
+
+    function downloadChartAsPDF(canvas, filename) {
+      console.log("Attempting to download chart as PDF...");
+      if (typeof window.jspdf === 'undefined' || typeof window.jspdf.jsPDF === 'undefined') {
+        console.error("jsPDF library not loaded!");
+        showMessage("Error: jsPDF library not found. Cannot download PDF.", "error");
+        return;
+      }
+      const { jsPDF } = window.jspdf;
+      try {
+        const imgData = canvas.toDataURL('image/png');
+        if (!imgData || imgData === 'data:,') {
+          throw new Error("Generated empty image data for PDF.");
+        }
+        const pdf = new jsPDF({
+          orientation: canvas.width > canvas.height ? 'landscape' : 'portrait',
+          unit: 'px',
+          format: [canvas.width, canvas.height]
+        });
+        pdf.addImage(imgData, 'PNG', 0, 0, canvas.width, canvas.height);
+        pdf.save(`${filename}.pdf`);
+      } catch (error) {
+        console.error("Error generating PDF:", error);
+        showMessage(`Failed to generate PDF: ${error.message}`, 'error');
+      }
+    }
+
+    function downloadChartAsHTML(canvas, filename, chartTitle) {
+      console.log("Attempting to download chart as HTML...");
+      try {
+        const imgData = canvas.toDataURL('image/png');
+        if (!imgData || imgData === 'data:,') {
+          throw new Error("Generated empty image data for HTML.");
+        }
+        const htmlContent = `
+          <!DOCTYPE html>
+          <html lang="en">
+          <head>
+            <meta charset="UTF-8">
+            <title>${chartTitle}</title>
+            <style>
+              body { font-family: sans-serif; padding: 20px; }
+              img { max-width: 100%; height: auto; border: 1px solid #ccc; }
+              h1 { text-align: center; }
+            </style>
+          </head>
+          <body>
+            <h1>${chartTitle}</h1>
+            <img src="${imgData}" alt="${chartTitle}">
+          </body>
+          </html>`;
+        const blob = new Blob([htmlContent], { type: 'text/html' });
+        const url = URL.createObjectURL(blob);
+        triggerDownload(url, `${filename}.html`);
+        URL.revokeObjectURL(url);
+      } catch (error) {
+        console.error("Error generating HTML:", error);
+        showMessage(`Failed to generate HTML: ${error.message}`, 'error');
+      }
+    }
+
+    // --- Chart Creation with Enhanced Customization ---
+
+    function createCharts(data, headers) {
+      clearCharts();
+      if (!headers?.length) { showMessage("No headers found.", "error"); return; }
+      if (!data?.length) { showMessage("No data rows found.", "error"); return; }
+
+      headers.forEach((header, index) => {
+        const columnData = data.map(row => row[header] !== undefined && row[header] !== null ? String(row[header]) : '');
+        const analysis = analyzeColumn(columnData);
+        if (analysis.frequencies.size === 0) {
+          console.warn(`Skipping empty column: ${header}`);
+          return;
+        }
+
+        const labels = Array.from(analysis.frequencies.keys());
+        const values = Array.from(analysis.frequencies.values());
+        const colors = generateColors(labels.length);
+
+        // Create container structure
+        const chartWrapper = document.createElement('div');
+        chartWrapper.className = 'chart-container-wrapper';
+        const canvasContainer = document.createElement('div');
+        canvasContainer.className = 'chart-canvas-container';
+        const canvas = document.createElement('canvas');
+        const canvasId = `chart-${index}`;
+        canvas.id = canvasId;
+        canvasContainer.appendChild(canvas);
+        chartWrapper.appendChild(canvasContainer);
+
+        // Create Download Button & Dropdown
+        const downloadArea = document.createElement('div');
+        downloadArea.className = 'mt-2 text-right relative';
+        const dropdownId = `dropdown-${index}`;
+        const dropdownContentId = `dropdown-content-${index}`;
+        downloadArea.innerHTML = `
+          <div class="dropdown">
+            <button id="${dropdownId}" class="bg-gray-200 hover:bg-gray-300 text-gray-700 font-semibold py-1 px-3 rounded-md text-sm inline-flex items-center">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+              </svg> Download
+            </button>
+            <div id="${dropdownContentId}" class="dropdown-content">
+              <button data-format="png">PNG</button>
+              <button data-format="jpeg">JPG</button>
+              <button data-format="pdf">PDF</button>
+              <button data-format="html">HTML</button>
+            </div>
+          </div>`;
+        chartWrapper.appendChild(downloadArea);
+        chartArea.appendChild(chartWrapper);
+
+        // Enhanced Chart Configuration with additional customization options:
+        const chartType = 'pie'; // Chart type is set to pie.
+        const chartConfig = {
+          type: chartType,
+          data: {
+            labels,
+            datasets: [{
+              label: `Frequency`,
+              data: values,
+              backgroundColor: colors,
+              borderColor: colors.map(c => c.replace('0.75', '1')),
+              borderWidth: 2,
+              hoverBorderWidth: 3,
+            }]
+          },
+          options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+              title: {
+                display: true,
+                text: header,
+                font: {
+                  family: 'Arial',
+                  size: 18,
+                  weight: 'bold',
+                },
+                color: '#333333',
+                padding: {
+                  top: 15,
+                  bottom: 15
+                }
+              },
+              legend: {
+                display: true,
+                position: 'top',
+                labels: {
+                  font: {
+                    family: 'Verdana',
+                    size: 12,
+                  },
+                  color: '#555555'
+                }
+              },
+              tooltip: {
+                callbacks: {
+                  label: function(context) {
+                    let label = context.label || '';
+                    if (label) { label += ': '; }
+                    if (context.parsed !== null) {
+                      const total = context.chart.data.datasets[0].data.reduce((a, b) => a + b, 0);
+                      const percentage = total > 0 ? ((context.parsed / total) * 100).toFixed(1) + '%' : '0.0%';
+                      label += `${context.formattedValue} (${percentage})`;
+                    }
+                    return label;
+                  }
+                },
+                backgroundColor: '#f8f9fa',
+                titleFont: {
+                  family: 'Georgia',
+                  size: 14,
+                  weight: 'normal'
+                },
+                bodyFont: {
+                  family: 'Georgia',
+                  size: 12,
+                },
+                borderColor: '#cccccc',
+                borderWidth: 1
+              }
+            },
+            animation: {
+              duration: 1500,
+              easing: 'easeInOutQuart'
+            },
+            layout: {
+              padding: {
+                left: 10,
+                right: 10,
+                top: 10,
+                bottom: 10
+              }
+            }
+          }
+        };
+
+        try {
+          const chartInstance = new Chart(canvas, chartConfig);
+          activeCharts.push({ chart: chartInstance, header: header });
+
+          // Add Event Listeners for Download Dropdown
+          const dropdownButton = document.getElementById(dropdownId);
+          const dropdownContent = document.getElementById(dropdownContentId);
+
+          dropdownButton.addEventListener('click', (event) => {
+            event.stopPropagation();
+            document.querySelectorAll('.dropdown-content.show-dropdown').forEach(openDropdown => {
+              if (openDropdown.id !== dropdownContentId) openDropdown.classList.remove('show-dropdown');
+            });
+            dropdownContent.classList.toggle('show-dropdown');
+          });
+
+          dropdownContent.addEventListener('click', (event) => {
+            const targetButton = event.target.closest('button[data-format]');
+            if (targetButton) {
+              const format = targetButton.getAttribute('data-format');
+              const chartIndex = parseInt(dropdownContentId.split('-').pop(), 10);
+              const chartItem = activeCharts[chartIndex];
+              if (chartItem) {
+                const filename = sanitizeFilename(chartItem.header);
+                const targetCanvas = chartItem.chart.canvas;
+                if (format === 'png' || format === 'jpeg') {
+                  downloadChartAsImage(targetCanvas, format, filename);
+                } else if (format === 'pdf') {
+                  downloadChartAsPDF(targetCanvas, filename);
+                } else if (format === 'html') {
+                  downloadChartAsHTML(targetCanvas, filename, chartItem.header);
+                }
+              } else {
+                console.error(`Could not find chart instance for index ${chartIndex}`);
+                showMessage("Internal error: Could not find chart data.", "error");
+              }
+              dropdownContent.classList.remove('show-dropdown');
+            }
+          });
+        } catch (error) {
+          console.error(`Error creating chart for header "${header}":`, error);
+          showMessage(`Could not create chart: ${header}. ${error.message}`, 'error');
+          chartWrapper.remove();
+        }
+      });
+
+      // Close dropdowns when clicking outside
+      window.addEventListener('click', (event) => {
+        if (!event.target.closest('.dropdown')) {
+          document.querySelectorAll('.dropdown-content.show-dropdown').forEach(openDropdown => {
+            openDropdown.classList.remove('show-dropdown');
+          });
+        }
+      });
+
+      if (activeCharts.length > 0) {
+        showMessage(`Successfully generated ${activeCharts.length} charts.`, 'success');
+      } else if (headers.length > 0) {
+        showMessage("No valid data columns found to generate charts.", "warning");
+      }
+    }
+
+    // --- Event Handlers ---
+
+    async function handleDataProcessing(dataSourcePromise) {
+      loadingIndicator.style.display = 'block';
+      fetchButton.disabled = true;
+      fileInput.disabled = true;
+      chartArea.innerHTML = '';
+      messageBox.style.display = 'none';
+      try {
+        const csvText = await dataSourcePromise;
+        if (!csvText) throw new Error("No data received.");
+        const results = await parseCsvData(csvText);
+        createCharts(results.data, results.meta.fields);
+      } catch (error) {
+        console.error("Processing Error:", error);
+        showMessage(`Error: ${error.message}`, "error");
+        clearCharts();
+      } finally {
+        loadingIndicator.style.display = 'none';
+        fetchButton.disabled = false;
+        fileInput.disabled = false;
+      }
+    }
+
+    // --- Input Event Listeners ---
+
+    fetchButton.addEventListener('click', () => {
+      const url = urlInput.value.trim();
+      if (!url) {
+        showMessage("Please enter a Google Sheet URL.", "error");
+        return;
+      }
+      handleDataProcessing(fetchCsvFromUrl(url));
+    });
+
+    fileInput.addEventListener('change', (event) => {
+      const file = event.target.files[0];
+      if (file) {
+        urlInput.value = '';
+        handleDataProcessing(readCsvFromFile(file));
+      } else {
+        clearCharts();
+      }
+    });
+
+    urlInput.addEventListener('keypress', (event) => {
+      if (event.key === 'Enter') fetchButton.click();
+    });
+  </script>
+
+  <!--
+    References:
+    - Tailwind CSS: https://tailwindcss.com/docs
+    - Chart.js: https://www.chartjs.org/docs/latest/
+    - PapaParse: https://www.papaparse.com/
+    - jsPDF: https://artskydj.github.io/jsPDF/docs/
+  -->
+</body>
+</html>
